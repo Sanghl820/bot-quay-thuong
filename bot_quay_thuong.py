@@ -7,21 +7,27 @@ import datetime
 import random
 import asyncio
 
-# === Biến toàn cục ===
+TOKEN = "7918568253:AAEoeInDbhyN3c4cKUkVdnT8fziAZoBBKzw"
+ADMIN_ID = 5815156606  # <-- Đây là Telegram ID của bạn
+
 INTRO_FILE = "intro_message.txt"
 participants = set()
 intro_sent = False
 intro_message_id = None
 group_id = None
 
-TOKEN = "7918568253:AAEoeInDbhyN3c4cKUkVdnT8fziAZoBBKzw"  # <<< Token của bạn
-
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# === Các hàm ===
+def only_admin(func):
+    async def wrapper(update: Update, context: CallbackContext):
+        if update.effective_user.id != ADMIN_ID:
+            await update.message.reply_text("❌ Bạn không có quyền sử dụng bot này.")
+            return
+        return await func(update, context)
+    return wrapper
 
-# Admin set nội dung giới thiệu
+@only_admin
 async def set_intro(update: Update, context: CallbackContext):
     if not context.args:
         await update.message.reply_text("❌ Dùng đúng cú pháp: /setintro [nội dung]")
@@ -31,7 +37,7 @@ async def set_intro(update: Update, context: CallbackContext):
         f.write(intro_text)
     await update.message.reply_text("✅ Đã lưu nội dung giới thiệu!")
 
-# Admin gửi nội dung giới thiệu
+@only_admin
 async def send_intro(update: Update, context: CallbackContext):
     global intro_sent, intro_message_id, group_id
 
@@ -55,7 +61,6 @@ async def send_intro(update: Update, context: CallbackContext):
     intro_message_id = sent_message.message_id
     group_id = update.message.chat_id
 
-# Người chơi bấm Tham Gia
 async def button_click(update: Update, context: CallbackContext):
     global intro_message_id
 
@@ -67,10 +72,9 @@ async def button_click(update: Update, context: CallbackContext):
         if user.id not in participants:
             participants.add(user.id)
             await query.message.reply_text(f"✅ {user.first_name} đã tham gia!")
-
             await update_intro_message(context)
 
-# Admin hẹn giờ quay thưởng
+@only_admin
 async def set_time(update: Update, context: CallbackContext):
     global group_id
     if len(context.args) < 2:
@@ -86,12 +90,10 @@ async def set_time(update: Update, context: CallbackContext):
         return
 
     group_id = update.message.chat_id
-
     scheduler.add_job(quay_thuong, DateTrigger(run_date=target_datetime), args=[context])
 
     await update.message.reply_text(f"✅ Đã hẹn giờ quay thưởng lúc {target_datetime.strftime('%Y-%m-%d %H:%M')}!")
 
-# Tự động quay thưởng
 async def quay_thuong(context: CallbackContext):
     await context.bot.send_message(
         chat_id=group_id,
@@ -108,24 +110,15 @@ async def quay_thuong(context: CallbackContext):
         return
 
     winners_count = 10
-    winner_list = []
-
-    if len(participants) <= winners_count:
-        winner_list = list(participants)
-    else:
-        winner_list = random.sample(list(participants), winners_count)
+    winner_list = list(participants) if len(participants) <= winners_count else random.sample(list(participants), winners_count)
 
     result_text = "🏆 Danh sách người chiến thắng:\n\n"
     for idx, user_id in enumerate(winner_list, 1):
         try:
             user = await context.bot.get_chat_member(group_id, user_id)
-            if user.user.username:
-                display_name = f"@{user.user.username}"
-            else:
-                display_name = user.user.first_name
+            display_name = f"@{user.user.username}" if user.user.username else user.user.first_name
             result_text += f"{idx}. <a href='tg://user?id={user_id}'>{display_name}</a>\n"
         except Exception as e:
-            print(f"⚠️ Lỗi lấy tên user {user_id}: {e}")
             result_text += f"{idx}. (Không xác định)\n"
 
     await context.bot.send_message(
@@ -134,7 +127,6 @@ async def quay_thuong(context: CallbackContext):
         parse_mode='HTML'
     )
 
-# Cập nhật lại số người tham gia
 async def update_intro_message(context: CallbackContext):
     if intro_message_id and group_id:
         try:
@@ -153,11 +145,10 @@ async def update_intro_message(context: CallbackContext):
                     [InlineKeyboardButton("✅ Tham Gia", callback_data="thamgia")]
                 ])
             )
-            print(f"✅ Cập nhật intro lúc {datetime.datetime.now()}")
         except Exception as e:
-            print(f"⚠️ Lỗi cập nhật intro: {e}")
+            print(f"⚠️ Lỗi update intro: {e}")
 
-# Admin mở lại chat group
+@only_admin
 async def unlock_group(update: Update, context: CallbackContext):
     await context.bot.set_chat_permissions(
         chat_id=update.message.chat_id,
@@ -165,11 +156,10 @@ async def unlock_group(update: Update, context: CallbackContext):
     )
     await update.message.reply_text("🔓 Group đã được mở chat lại!")
 
-# Admin xem số lượng người tham gia
+@only_admin
 async def participant_count(update: Update, context: CallbackContext):
     await update.message.reply_text(f"👥 Hiện có {len(participants)} người đã tham gia.")
 
-# === Main ===
 def main():
     app = Application.builder().token(TOKEN).build()
 
@@ -180,10 +170,9 @@ def main():
     app.add_handler(CommandHandler("unlock", unlock_group, filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("participants", participant_count, filters.ChatType.PRIVATE))
 
-    # Cập nhật tự động mỗi 1 giờ
     scheduler.add_job(lambda: asyncio.run(update_intro_message(app.bot)), 'interval', hours=1)
 
-    print("✅ Bot đang chạy...")
+    print("✅ Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
